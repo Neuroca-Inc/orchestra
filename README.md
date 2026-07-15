@@ -16,6 +16,8 @@ A local Linux desktop application for recording Operator, Guardian, and Auditor 
 - Exports complete ranked search evidence to agent-friendly JSON with one click.
 - Creates immutable, internal-only user Research Runs from explicitly selected project artifacts.
 - Attaches hashed research summaries to p-b-v history without delivering them to an agent or changing workflow state.
+- Searches external literature providers (arXiv, Crossref, PubMed, Semantic Scholar) from the same query box, in a separate results dialog.
+- Exports external results as provider-tagged JSON observations and ready-to-cite BibTeX bibliographies.
 - Switches cleanly between independent project roots.
 
 ![Orchestra Desktop View](/assets/orchestra-start-view.png)
