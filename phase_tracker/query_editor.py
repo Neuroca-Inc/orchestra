@@ -14,7 +14,13 @@ import sqlite3
 import time
 from pathlib import Path
 
-from PySide6.QtGui import QFont
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QSyntaxHighlighter,
+    QTextCharFormat,
+)
+import re
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -32,6 +38,90 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 from . import analytics_db
+
+SQL_KEYWORDS = (
+    "select from where group by order having as and or not in is null like "
+    "limit offset join left right inner outer on union all distinct case when "
+    "then else end between exists asc desc with pragma attach database"
+).split()
+
+SQL_FUNCTIONS = (
+    "sum count avg min max round nullif coalesce cast abs length lower upper "
+    "substr replace date datetime strftime julianday ifnull instr trim "
+    "group_concat total printf"
+).split()
+
+
+class SqlHighlighter(QSyntaxHighlighter):
+    """Lightweight SQL highlighting tuned to the dark theme. No dependencies."""
+
+    def __init__(self, document) -> None:
+        super().__init__(document)
+        self.table_names: set[str] = set()
+
+        def fmt(color: str, bold: bool = False, italic: bool = False) -> QTextCharFormat:
+            char_format = QTextCharFormat()
+            char_format.setForeground(QColor(color))
+            if bold:
+                char_format.setFontWeight(QFont.Weight.Bold)
+            if italic:
+                char_format.setFontItalic(True)
+            return char_format
+
+        self.keyword_format = fmt("#7fb2ff", bold=True)
+        self.function_format = fmt("#c792ea")
+        self.table_format = fmt("#4dd0e1")
+        self.string_format = fmt("#a5d6a7")
+        self.number_format = fmt("#f78c6c")
+        self.comment_format = fmt("#5c6773", italic=True)
+
+        keyword_pattern = r"\b(?:" + "|".join(SQL_KEYWORDS) + r")\b"
+        function_pattern = r"\b(?:" + "|".join(SQL_FUNCTIONS) + r")\b(?=\s*\()"
+        self.rules = [
+            (re.compile(function_pattern, re.IGNORECASE), self.function_format),
+            (re.compile(keyword_pattern, re.IGNORECASE), self.keyword_format),
+            (re.compile(r"\b\d+(?:\.\d+)?\b"), self.number_format),
+            (re.compile(r"'[^']*'"), self.string_format),
+        ]
+        self.line_comment = re.compile(r"--[^\n]*")
+        self.block_start = re.compile(r"/\*")
+        self.block_end = re.compile(r"\*/")
+
+    def set_table_names(self, names: set[str]) -> None:
+        self.table_names = {name.lower() for name in names}
+        self.rehighlight()
+
+    def highlightBlock(self, text: str) -> None:
+        for pattern, char_format in self.rules:
+            for match in pattern.finditer(text):
+                self.setFormat(match.start(), match.end() - match.start(), char_format)
+        if self.table_names:
+            for match in re.finditer(r"\b[A-Za-z_][A-Za-z0-9_.]*\b", text):
+                if match.group(0).lower() in self.table_names:
+                    self.setFormat(
+                        match.start(), match.end() - match.start(), self.table_format
+                    )
+        for match in self.line_comment.finditer(text):
+            self.setFormat(match.start(), match.end() - match.start(), self.comment_format)
+        # /* ... */ across lines via block state
+        self.setCurrentBlockState(0)
+        start = 0
+        if self.previousBlockState() != 1:
+            first = self.block_start.search(text)
+            start = first.start() if first else -1
+        if self.previousBlockState() == 1:
+            start = 0
+        while start >= 0:
+            end_match = self.block_end.search(text, start)
+            if end_match is None:
+                self.setCurrentBlockState(1)
+                self.setFormat(start, len(text) - start, self.comment_format)
+                break
+            length = end_match.end() - start
+            self.setFormat(start, length, self.comment_format)
+            next_start = self.block_start.search(text, end_match.end())
+            start = next_start.start() if next_start else -1
+
 
 STARTER_QUERY = (
     "SELECT judge, judged,\n"
@@ -94,6 +184,8 @@ class QueryEditorWidget(QWidget):
         font = QFont("Monospace")
         font.setStyleHint(QFont.StyleHint.TypeWriter)
         self.editor.setFont(font)
+        self.highlighter = SqlHighlighter(self.editor.document())
+        self.reload_schema()
         editor_layout.addWidget(self.editor, 1)
 
         button_row = QHBoxLayout()
@@ -129,10 +221,17 @@ class QueryEditorWidget(QWidget):
         connection = self.get_connection()
         if connection is None:
             return
+        names: set[str] = set()
         for table, columns in analytics_db.schema_summary(connection):
             self.schema_list.addItem(table)
+            names.add(table)
+            if "." in table:
+                names.add(table.split(".", 1)[1])
             for column in columns:
                 self.schema_list.addItem(f"    {column}")
+                names.add(column)
+        if getattr(self, "highlighter", None) is not None:
+            self.highlighter.set_table_names(names)
 
     def _reload_saved(self) -> None:
         self.saved_combo.clear()
