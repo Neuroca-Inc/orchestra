@@ -18,8 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .domain import Agent, ProjectStatus, WorkflowState
-from .domain import ArchiveAction
+from .domain import Agent, ArchiveAction, ProjectStatus, WorkflowMode, WorkflowState
 
 
 class DropZone(QFrame):
@@ -162,6 +161,7 @@ class WorkflowPanel(QFrame):
 
         cards = QHBoxLayout()
         self.agent_cards = {agent: AgentCard(agent) for agent in Agent}
+        self.arrows: list[QLabel] = []
         for index, agent in enumerate((Agent.OPERATOR, Agent.GUARDIAN, Agent.AUDITOR)):
             cards.addWidget(self.agent_cards[agent])
             if index < 2:
@@ -169,6 +169,7 @@ class WorkflowPanel(QFrame):
                 arrow.setObjectName("muted")
                 arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 cards.addWidget(arrow)
+                self.arrows.append(arrow)
         layout.addLayout(cards)
 
         self.handoff = QLabel()
@@ -177,11 +178,27 @@ class WorkflowPanel(QFrame):
         layout.addWidget(self.handoff)
 
     def update_state(self, state: WorkflowState, last_handoff: str = "") -> None:
+        skirmish = state.workflow_mode == WorkflowMode.OPERATOR_SKIRMISH
+        self.agent_cards[Agent.GUARDIAN].setVisible(not skirmish)
+        self.agent_cards[Agent.AUDITOR].setVisible(not skirmish)
+        for arrow in self.arrows:
+            arrow.setVisible(not skirmish)
+
         if state.status == ProjectStatus.COMPLETE:
             self.current.setText("PROJECT COMPLETE")
             for card in self.agent_cards.values():
                 card.set_active(False, "Complete")
             self.handoff.setText("The project is closed. Reopen it from the Workflow menu if work resumes.")
+            return
+
+        if skirmish:
+            self.current.setText("OPERATOR SKIRMISH")
+            self.agent_cards[Agent.OPERATOR].set_active(
+                True, "Frame · construct · attack · audit · seal"
+            )
+            self.handoff.setText(
+                last_handoff or "Record the current Operator Skirmish pass and artifacts."
+            )
             return
 
         self.current.setText(f"AWAITING {state.active_agent.value.upper()}")
@@ -209,12 +226,12 @@ class ArchiveIntake(QFrame):
         layout = QVBoxLayout(self)
 
         heading = QHBoxLayout()
-        source_label = QLabel("RECORD AGENT RETURN")
-        source_label.setObjectName("eyebrow")
+        self.source_label = QLabel("RECORD AGENT RETURN")
+        self.source_label.setObjectName("eyebrow")
         self.source_badge = QLabel("OPERATOR")
         self.source_badge.setObjectName("activeText")
         self.result_combo = QComboBox()
-        heading.addWidget(source_label)
+        heading.addWidget(self.source_label)
         heading.addStretch(1)
         heading.addWidget(QLabel("Source"))
         heading.addWidget(self.source_badge)
@@ -268,6 +285,14 @@ class ArchiveIntake(QFrame):
         actions.addWidget(self.branch_button, 1)
         actions.addWidget(self.phase_button, 1)
         layout.addLayout(actions)
+
+    def set_workflow_mode(self, mode: WorkflowMode) -> None:
+        if mode == WorkflowMode.OPERATOR_SKIRMISH:
+            self.source_label.setText("RECORD SKIRMISH PASS")
+            self.note_edit.setPlaceholderText("Optional operator note for this pass")
+        else:
+            self.source_label.setText("RECORD AGENT RETURN")
+            self.note_edit.setPlaceholderText("Optional operator note for this handoff")
 
     def clear_return(self) -> None:
         self.drop_zone.clear()
