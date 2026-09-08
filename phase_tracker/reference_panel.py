@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from .activity_log import ActivityLog
 from .bibtex import format_bibliography
 from .references import (
     ConnectorError,
