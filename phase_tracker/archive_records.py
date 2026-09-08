@@ -4,11 +4,11 @@ from pathlib import Path
 from typing import Any
 
 from .archive_policy import ArchivePlacement, PlacementMode
-from .domain import Transition, WorkflowState
+from .domain import Transition, WorkflowMode, WorkflowState
 from .state_store import StateStore
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def build_manifest(
@@ -25,12 +25,17 @@ def build_manifest(
     if placement.bootstrap:
         coordinate_authority = "STRUCTURAL BOOTSTRAP"
     elif placement.mode == PlacementMode.CREATE:
-        coordinate_authority = "AUDITOR RESULT"
+        coordinate_authority = (
+            "OPERATOR SKIRMISH PASS"
+            if state.workflow_mode == WorkflowMode.OPERATOR_SKIRMISH
+            else "AUDITOR RESULT"
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "event_id": event_id,
         "event_type": event_type(placement),
         "recorded_at": timestamp,
+        "workflow_mode": state.workflow_mode.value,
         "coordinate": placement.target.coordinate.to_dict(),
         "coordinate_authority": coordinate_authority,
         "archive_action": placement.target.action.value,
@@ -68,6 +73,7 @@ def append_event(
             "event_id": event_id,
             "event_type": event_type(placement),
             "recorded_at": timestamp,
+            "workflow_mode": state.workflow_mode.value,
             "coordinate": placement.target.coordinate.to_dict(),
             "archive_action": placement.target.action.value,
             "placement": placement.relative_folder.as_posix(),
