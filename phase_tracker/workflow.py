@@ -2,16 +2,24 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .domain import Agent, ProjectStatus, Transition, WorkflowState
+from .domain import (
+    Agent,
+    ProjectStatus,
+    Transition,
+    WorkflowMode,
+    WorkflowState,
+)
 
 
-RESULTS: dict[Agent, tuple[str, ...]] = {
+TRIAD_RESULTS: dict[Agent, tuple[str, ...]] = {
     Agent.OPERATOR: ("Package produced", "Not produced", "Project complete"),
     Agent.GUARDIAN: ("Pass", "Fail", "Project complete"),
     Agent.AUDITOR: ("Pass", "Fail", "Project complete"),
 }
 
-WORKFLOW_POSITIONS = (
+SKIRMISH_RESULTS = ("Pass sealed", "Not sealed", "Project complete")
+
+TRIAD_WORKFLOW_POSITIONS = (
     "Operator",
     "Auditor",
     "Auditor revising after Guardian failure",
@@ -20,14 +28,31 @@ WORKFLOW_POSITIONS = (
     "Project complete",
 )
 
+SKIRMISH_WORKFLOW_POSITIONS = (
+    "Operator skirmish",
+    "Project complete",
+)
+
+WORKFLOW_POSITIONS = TRIAD_WORKFLOW_POSITIONS
+
 
 def available_results(state: WorkflowState) -> tuple[str, ...]:
-    return RESULTS[state.active_agent]
+    if state.workflow_mode == WorkflowMode.OPERATOR_SKIRMISH:
+        return SKIRMISH_RESULTS
+    return TRIAD_RESULTS[state.active_agent]
+
+
+def workflow_positions(state: WorkflowState) -> tuple[str, ...]:
+    if state.workflow_mode == WorkflowMode.OPERATOR_SKIRMISH:
+        return SKIRMISH_WORKFLOW_POSITIONS
+    return TRIAD_WORKFLOW_POSITIONS
 
 
 def describe_position(state: WorkflowState) -> str:
     if state.status == ProjectStatus.COMPLETE:
         return "Project complete"
+    if state.workflow_mode == WorkflowMode.OPERATOR_SKIRMISH:
+        return "Operator skirmish"
     if state.active_agent == Agent.AUDITOR and state.auditor_revision:
         return "Auditor revising after Guardian failure"
     if state.active_agent == Agent.GUARDIAN and state.guardian_subject:
@@ -35,8 +60,22 @@ def describe_position(state: WorkflowState) -> str:
     return state.active_agent.value
 
 
+def align_mode(state: WorkflowState, mode: WorkflowMode) -> WorkflowState:
+    if mode == state.workflow_mode:
+        return state
+    return replace(
+        state,
+        workflow_mode=mode,
+        active_agent=Agent.OPERATOR,
+        guardian_subject=None,
+        auditor_revision=False,
+        status=ProjectStatus.IN_PROGRESS,
+    )
+
+
 def align_position(state: WorkflowState, position: str) -> WorkflowState:
-    if position not in WORKFLOW_POSITIONS:
+    positions = workflow_positions(state)
+    if position not in positions:
         raise ValueError(f"Unknown workflow position: {position}")
     if position == "Project complete":
         return replace(
@@ -44,6 +83,14 @@ def align_position(state: WorkflowState, position: str) -> WorkflowState:
             status=ProjectStatus.COMPLETE,
             guardian_subject=None,
             auditor_revision=False,
+        )
+    if state.workflow_mode == WorkflowMode.OPERATOR_SKIRMISH:
+        return replace(
+            state,
+            active_agent=Agent.OPERATOR,
+            guardian_subject=None,
+            auditor_revision=False,
+            status=ProjectStatus.IN_PROGRESS,
         )
     if position == "Auditor revising after Guardian failure":
         agent = Agent.AUDITOR
@@ -74,7 +121,7 @@ def advance(state: WorkflowState, result: str) -> Transition:
     if state.status == ProjectStatus.COMPLETE:
         raise ValueError("The project is marked complete")
     if result not in available_results(state):
-        raise ValueError(f"{result!r} is not valid for {state.active_agent.value}")
+        raise ValueError(f"{result!r} is not valid for {describe_position(state)}")
 
     previous = state.active_agent
     if result == "Project complete":
@@ -85,6 +132,20 @@ def advance(state: WorkflowState, result: str) -> Transition:
             auditor_revision=False,
         )
         return Transition(previous, result, next_state, "Project complete")
+
+    if state.workflow_mode == WorkflowMode.OPERATOR_SKIRMISH:
+        next_state = replace(
+            state,
+            active_agent=Agent.OPERATOR,
+            guardian_subject=None,
+            auditor_revision=False,
+        )
+        handoff = (
+            "Skirmish pass sealed. Continue with the next Operator pass."
+            if result == "Pass sealed"
+            else "Skirmish remains open. Continue the current Operator pass."
+        )
+        return Transition(previous, result, next_state, handoff)
 
     if previous == Agent.OPERATOR:
         if result == "Package produced":
