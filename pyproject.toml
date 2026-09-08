@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orchestra"
-version = "0.3.0"
-description = "Local provenance control for Operator, Guardian, and Auditor handoffs"
+version = "0.4.0"
+description = "Local provenance control for Triad and Operator Skirmish research workflows"
 requires-python = ">=3.11"
 dependencies = [
     "PySide6-Essentials>=6.7,<7",
