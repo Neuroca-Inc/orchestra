@@ -16,7 +16,8 @@ PHASE_PATTERNS = (
 )
 BRANCH_PATTERN = re.compile(r"^p(?P<phase>\d+)-b(?P<branch>\d+)$")
 VERSION_PATTERN = re.compile(
-    r"^p(?P<phase>\d+)-b(?P<branch>\d+)-v(?P<version>\d+)$"
+    r"^p(?P<phase>\d+)-b(?P<branch>\d+)-v(?P<version>\d+)(?:$|[-_ ].*)",
+    re.IGNORECASE,
 )
 
 
@@ -25,6 +26,7 @@ class BranchEntry:
     number: int
     path: Path
     versions: list[int] = field(default_factory=list)
+    version_paths: dict[int, Path] = field(default_factory=dict)
 
     @property
     def latest_version(self) -> int:
@@ -124,7 +126,16 @@ def scan_project(root: Path) -> ProjectIndex:
                     int(version_match.group("phase")) == number
                     and int(version_match.group("branch")) == branch_number
                 ):
-                    branch.versions.append(int(version_match.group("version")))
+                    version_number = int(version_match.group("version"))
+                    existing = branch.version_paths.get(version_number)
+                    if existing is not None and existing != version_path:
+                        raise ValueError(
+                            "Ambiguous version directories for "
+                            f"p{number}-b{branch_number}-v{version_number}: "
+                            f"{existing.name!r}, {version_path.name!r}"
+                        )
+                    branch.versions.append(version_number)
+                    branch.version_paths[version_number] = version_path
             branch.versions.sort()
             phase.branches[branch_number] = branch
         index.phases[number] = phase
@@ -198,13 +209,21 @@ def current_target(
     branch = phase.branches.get(selected.branch)
     if not branch or selected.version not in branch.versions:
         return None
-    return _target(
-        index.root,
-        ArchiveAction.CONTINUE,
+    version_path = branch.version_paths.get(selected.version)
+    if version_path is None:
+        return None
+    coordinate = Coordinate(
         selected.phase,
-        phase.path.name,
         selected.branch,
         selected.version,
+        phase.path.name,
+    )
+    return ArchiveTarget(
+        coordinate=coordinate,
+        action=ArchiveAction.CONTINUE,
+        phase_path=phase.path,
+        branch_path=branch.path,
+        version_path=version_path,
     )
 
 
