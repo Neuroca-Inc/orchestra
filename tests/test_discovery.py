@@ -50,6 +50,44 @@ class DiscoveryTests(unittest.TestCase):
                 compute_target(scan_project(root), ArchiveAction.NEW_PHASE, None)
 
 
+    def test_descriptive_version_names_are_discovered(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            branch = root / "p1" / "p1-b1"
+            (branch / "p1-b1-v4").mkdir(parents=True)
+            descriptive = branch / "p1-b1-v18_barrier-renewal-ladder_20260908_002100"
+            descriptive.mkdir()
+
+            index = scan_project(root)
+            current = index.coordinate_for(1, 1)
+
+            self.assertEqual(current.version, 18)
+            self.assertEqual(
+                index.phases[1].branches[1].version_paths[18], descriptive
+            )
+            continued = compute_target(index, ArchiveAction.CONTINUE, current)
+            self.assertEqual(continued.coordinate.version, 19)
+            self.assertEqual(continued.version_path.name, "p1-b1-v19")
+
+    def test_project_can_start_from_non_v1_descriptive_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            descriptive = (
+                root / "p7" / "p7-b3" /
+                "p7-b3-v22_existing-provenance-package_20260908"
+            )
+            descriptive.mkdir(parents=True)
+
+            index = scan_project(root)
+            current = index.latest_coordinate()
+
+            self.assertIsNotNone(current)
+            self.assertEqual((current.phase, current.branch, current.version), (7, 3, 22))
+            self.assertEqual(
+                index.phases[7].branches[3].version_paths[22], descriptive
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
 
