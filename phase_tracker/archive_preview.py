@@ -5,7 +5,13 @@ from pathlib import Path
 
 from .archive_policy import PlacementMode, compute_placement
 from .discovery import ProjectIndex
-from .domain import ArchiveAction, Coordinate, ProjectStatus, WorkflowState
+from .domain import (
+    ArchiveAction,
+    Coordinate,
+    ProjectStatus,
+    WorkflowMode,
+    WorkflowState,
+)
 
 
 @dataclass(frozen=True)
@@ -46,11 +52,14 @@ def build_previews(
                 state.status == ProjectStatus.IN_PROGRESS,
             )
         except ValueError as error:
-            restriction = (
-                "REVISION STAYS CURRENT"
-                if state.auditor_revision
-                else "FRESH AUDITOR PASS/FAIL ONLY"
-            )
+            if state.workflow_mode == WorkflowMode.OPERATOR_SKIRMISH:
+                restriction = "SEALED SKIRMISH PASS ONLY"
+            else:
+                restriction = (
+                    "REVISION STAYS CURRENT"
+                    if state.auditor_revision
+                    else "FRESH AUDITOR PASS/FAIL ONLY"
+                )
             previews[action] = ArchivePreview(
                 f"{heading}\n{restriction}",
                 str(error),

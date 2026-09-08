@@ -33,7 +33,13 @@ from PySide6.QtWidgets import (
 from .archive import ArchiveError, ArchiveService, ArchiveStateError
 from .archive_preview import build_previews
 from .discovery import ProjectIndex, scan_project
-from .domain import ArchiveAction, Coordinate, ProjectStatus, WorkflowState
+from .domain import (
+    ArchiveAction,
+    Coordinate,
+    ProjectStatus,
+    WorkflowMode,
+    WorkflowState,
+)
 from .project_navigator import ProjectNavigator
 from .search_panel import SearchPanel
 from .state_store import StateStore
@@ -43,8 +49,10 @@ from .workflow import (
     WORKFLOW_POSITIONS,
     available_results,
     describe_position,
+    workflow_positions
 )
-from .workflow_alignment import record_alignment
+from .workflow_alignment import record_alignment, record_mode_alignment
+
 def _rail_pixmap(kind: str, color: str) -> QPixmap:
     """Paint a rail icon: 'window' = 2x2 grid, 'bars' = ascending signal bars."""
     pixmap = QPixmap(26, 26)
@@ -62,7 +70,6 @@ def _rail_pixmap(kind: str, color: str) -> QPixmap:
         painter.drawRoundedRect(18, 3, 5, 21, 1.5, 1.5)
     painter.end()
     return pixmap
-
 
 class MainWindow(QMainWindow):
     def __init__(self, initial_root: Path | None = None):
@@ -107,10 +114,14 @@ class MainWindow(QMainWindow):
         workflow_menu = self.menuBar().addMenu("Workflow")
         reopen = QAction("Reopen completed project", self)
         reopen.triggered.connect(self.reopen_project)
+        set_mode = QAction("Set workflow mode…", self)
+        set_mode.setShortcut("Ctrl+Shift+M")
+        set_mode.triggered.connect(self.set_workflow_mode)
         set_position = QAction("Set workflow position…", self)
         set_position.setShortcut("Ctrl+Shift+W")
         set_position.triggered.connect(self.set_workflow_position)
         workflow_menu.addAction(reopen)
+        workflow_menu.addAction(set_mode)
         workflow_menu.addAction(set_position)
 
     def _build_ui(self) -> None:
@@ -120,11 +131,11 @@ class MainWindow(QMainWindow):
         outer.setSpacing(10)
         header = QHBoxLayout()
         identity = QVBoxLayout()
-        eyebrow = QLabel("THREE-AGENT PROVENANCE CONTROL")
-        eyebrow.setObjectName("eyebrow")
+        self.mode_eyebrow = QLabel("THREE-AGENT PROVENANCE CONTROL")
+        self.mode_eyebrow.setObjectName("eyebrow")
         title = QLabel("Orchestra")
         title.setObjectName("title")
-        identity.addWidget(eyebrow)
+        identity.addWidget(self.mode_eyebrow)
         identity.addWidget(title)
         header.addLayout(identity)
         header.addStretch(1)
@@ -345,6 +356,13 @@ class MainWindow(QMainWindow):
             self.version_label.setText("No archived interactions")
 
     def _update_workflow(self) -> None:
+        skirmish = self.state.workflow_mode == WorkflowMode.OPERATOR_SKIRMISH
+        self.mode_eyebrow.setText(
+            "OPERATOR SKIRMISH · SINGLE-AGENT PROVENANCE CONTROL"
+            if skirmish
+            else "THREE-AGENT PROVENANCE CONTROL"
+        )
+        self.intake.set_workflow_mode(self.state.workflow_mode)
         self.workflow_panel.update_state(self.state, self.last_handoff)
         self.source_badge.setText(self.state.active_agent.value.upper())
         self.result_combo.clear()
@@ -434,20 +452,69 @@ class MainWindow(QMainWindow):
             return
         self.state = replace(self.state, status=ProjectStatus.IN_PROGRESS)
         StateStore(self.root).save(self.state)
-        self.last_handoff = "Project reopened. Resume with the current agent."
+        self.last_handoff = (
+            "Project reopened. Resume the Operator Skirmish."
+            if self.state.workflow_mode == WorkflowMode.OPERATOR_SKIRMISH
+            else "Project reopened. Resume with the current agent."
+        )
         self._update_workflow()
         self._update_previews()
+
+    def set_workflow_mode(self) -> None:
+        if not self.root:
+            return
+        labels = ("Triad", "Operator Skirmish")
+        current_index = (
+            1 if self.state.workflow_mode == WorkflowMode.OPERATOR_SKIRMISH else 0
+        )
+        label, accepted = QInputDialog.getItem(
+            self,
+            "Set workflow mode",
+            "Which governance model should this project use?",
+            labels,
+            current_index,
+            False,
+        )
+        if not accepted:
+            return
+        mode = (
+            WorkflowMode.OPERATOR_SKIRMISH
+            if label == "Operator Skirmish"
+            else WorkflowMode.TRIAD
+        )
+        if mode == self.state.workflow_mode:
+            return
+        try:
+            receipt = record_mode_alignment(self.root, self.state, mode)
+        except OSError as error:
+            QMessageBox.warning(
+                self,
+                "Workflow mode not saved",
+                f"The project state could not be updated:\n{error}",
+            )
+            return
+        self.state = receipt.state
+        self.last_handoff = receipt.handoff
+        self._update_workflow()
+        self._update_previews()
+        if receipt.warning:
+            QMessageBox.warning(self, "Workflow mode saved", receipt.warning)
 
     def set_workflow_position(self) -> None:
         if not self.root:
             return
+        positions = workflow_positions(self.state)
         current = describe_position(self.state)
-        current_index = WORKFLOW_POSITIONS.index(current)
+        current_index = positions.index(current)
         position, accepted = QInputDialog.getItem(
             self,
             "Set workflow position",
-            "Which agent response are you currently awaiting?",
-            WORKFLOW_POSITIONS,
+            (
+                "Which Skirmish position is current?"
+                if self.state.workflow_mode == WorkflowMode.OPERATOR_SKIRMISH
+                else "Which agent response are you currently awaiting?"
+            ),
+            positions,
             current_index,
             False,
         )

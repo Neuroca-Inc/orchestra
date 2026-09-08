@@ -5,7 +5,14 @@ from enum import StrEnum
 from pathlib import Path
 
 from .discovery import ProjectIndex, compute_target, current_target
-from .domain import Agent, ArchiveAction, ArchiveTarget, Coordinate, WorkflowState
+from .domain import (
+    Agent,
+    ArchiveAction,
+    ArchiveTarget,
+    Coordinate,
+    WorkflowMode,
+    WorkflowState,
+)
 
 
 class PlacementMode(StrEnum):
@@ -34,6 +41,32 @@ def compute_placement(
     state: WorkflowState,
     result: str,
 ) -> ArchivePlacement:
+    existing = current_target(index, current)
+
+    if state.workflow_mode == WorkflowMode.OPERATOR_SKIRMISH:
+        if existing is None:
+            if action != ArchiveAction.CONTINUE:
+                raise ValueError(
+                    "The first Skirmish version is a fixed bootstrap; use Continue to create it"
+                )
+            return ArchivePlacement(
+                PlacementMode.CREATE,
+                compute_target(index, ArchiveAction.CONTINUE, current),
+                Path("."),
+                bootstrap=True,
+            )
+        if result == "Pass sealed":
+            return ArchivePlacement(
+                PlacementMode.CREATE,
+                compute_target(index, action, current),
+                Path("."),
+            )
+        if action != ArchiveAction.CONTINUE:
+            raise ValueError(
+                "Only a sealed Operator Skirmish pass may create a new branch or phase"
+            )
+        return ArchivePlacement(PlacementMode.APPEND, existing, Path("."))
+
     auditor_advances = (
         state.active_agent == Agent.AUDITOR
         and not state.auditor_revision
@@ -46,7 +79,6 @@ def compute_placement(
             Path("."),
         )
 
-    existing = current_target(index, current)
     if existing is None:
         if action != ArchiveAction.CONTINUE:
             raise ValueError(

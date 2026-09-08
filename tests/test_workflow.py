@@ -1,11 +1,18 @@
 import unittest
 
-from phase_tracker.domain import Agent, ProjectStatus, WorkflowState
+from phase_tracker.domain import (
+    Agent,
+    ProjectStatus,
+    WorkflowMode,
+    WorkflowState,
+)
 from phase_tracker.workflow import (
     WORKFLOW_POSITIONS,
     advance,
+    align_mode,
     align_position,
     describe_position,
+    workflow_positions,
 )
 
 
@@ -79,6 +86,45 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual(state.guardian_subject, subject)
                 self.assertEqual(describe_position(state), label)
         self.assertIn("Project complete", WORKFLOW_POSITIONS)
+
+    def test_skirmish_pass_returns_to_operator(self) -> None:
+        state = WorkflowState(workflow_mode=WorkflowMode.OPERATOR_SKIRMISH)
+        transition = advance(state, "Pass sealed")
+        self.assertEqual(transition.next_state.active_agent, Agent.OPERATOR)
+        self.assertEqual(
+            transition.next_state.workflow_mode,
+            WorkflowMode.OPERATOR_SKIRMISH,
+        )
+        self.assertIsNone(transition.next_state.guardian_subject)
+        self.assertFalse(transition.next_state.auditor_revision)
+        self.assertIn("next Operator pass", transition.handoff)
+
+    def test_skirmish_not_sealed_stays_open(self) -> None:
+        state = WorkflowState(workflow_mode=WorkflowMode.OPERATOR_SKIRMISH)
+        transition = advance(state, "Not sealed")
+        self.assertEqual(transition.next_state.active_agent, Agent.OPERATOR)
+        self.assertIn("current Operator pass", transition.handoff)
+
+    def test_switching_to_skirmish_collapses_role_state(self) -> None:
+        triad = WorkflowState(
+            active_agent=Agent.GUARDIAN,
+            guardian_subject=Agent.AUDITOR,
+            auditor_revision=True,
+        )
+        skirmish = align_mode(triad, WorkflowMode.OPERATOR_SKIRMISH)
+        self.assertEqual(skirmish.active_agent, Agent.OPERATOR)
+        self.assertIsNone(skirmish.guardian_subject)
+        self.assertFalse(skirmish.auditor_revision)
+        self.assertEqual(describe_position(skirmish), "Operator skirmish")
+        self.assertEqual(
+            workflow_positions(skirmish),
+            ("Operator skirmish", "Project complete"),
+        )
+
+    def test_legacy_state_without_mode_defaults_to_triad(self) -> None:
+        state = WorkflowState.from_dict({"active_agent": "Auditor"})
+        self.assertEqual(state.workflow_mode, WorkflowMode.TRIAD)
+        self.assertEqual(state.active_agent, Agent.AUDITOR)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,11 @@ class Agent(StrEnum):
     AUDITOR = "Auditor"
 
 
+class WorkflowMode(StrEnum):
+    TRIAD = "triad"
+    OPERATOR_SKIRMISH = "operator_skirmish"
+
+
 class ArchiveAction(StrEnum):
     CONTINUE = "continue"
     NEW_BRANCH = "new_branch"
@@ -67,6 +72,7 @@ class ArchiveTarget:
 
 @dataclass
 class WorkflowState:
+    workflow_mode: WorkflowMode = WorkflowMode.TRIAD
     active_agent: Agent = Agent.OPERATOR
     guardian_subject: Agent | None = None
     auditor_revision: bool = False
@@ -77,6 +83,7 @@ class WorkflowState:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "workflow_mode": self.workflow_mode.value,
             "active_agent": self.active_agent.value,
             "guardian_subject": (
                 self.guardian_subject.value if self.guardian_subject else None
@@ -93,10 +100,20 @@ class WorkflowState:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> WorkflowState:
         subject = value.get("guardian_subject")
+        mode = WorkflowMode(value.get("workflow_mode", WorkflowMode.TRIAD.value))
+        active_agent = Agent(value.get("active_agent", Agent.OPERATOR.value))
+        if mode == WorkflowMode.OPERATOR_SKIRMISH:
+            active_agent = Agent.OPERATOR
+            subject = None
         return cls(
-            active_agent=Agent(value.get("active_agent", Agent.OPERATOR.value)),
+            workflow_mode=mode,
+            active_agent=active_agent,
             guardian_subject=Agent(subject) if subject else None,
-            auditor_revision=bool(value.get("auditor_revision", False)),
+            auditor_revision=(
+                bool(value.get("auditor_revision", False))
+                if mode == WorkflowMode.TRIAD
+                else False
+            ),
             status=ProjectStatus(
                 value.get("status", ProjectStatus.IN_PROGRESS.value)
             ),
